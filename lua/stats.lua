@@ -177,7 +177,7 @@ formatters["nil"] = {
 local openFiles = {}
 
 --- base constructor for rx and tx counters
-local function newCounter(ctrType, name, dev, format, file, direction)
+local function newCounter(ctrType, name, dev, format, file, direction, sampling_rate)
 	local id
 	mod.share.lock(function()
 		id = mod.share.counterId + 1
@@ -204,6 +204,7 @@ local function newCounter(ctrType, name, dev, format, file, direction)
 	if not formatters[format] then
 		log:fatal("Unsupported output format " .. format)
 	end
+	sampling_rate = sampling_rate or 1.0
 	return {
 		name = name,
 		dev = dev,
@@ -217,8 +218,10 @@ local function newCounter(ctrType, name, dev, format, file, direction)
 		mpps = {},
 		mbit = {},
 		wireMbit = {},
+		timestamp = {},
 		id = id,
-		dir = direction
+		dir = direction,
+		sampling_rate = sampling_rate
 	}
 end
 
@@ -239,6 +242,7 @@ local function updateCounter(self, time, pkts, bytes, dontPrint)
 		-- first call, save current stats but do not print anything
 		self.total, self.totalBytes = pkts, bytes
 		self.lastUpdate = time
+		self.last_print = 0
 		self:print("Init")
 		return false
 	end
@@ -249,7 +253,9 @@ local function updateCounter(self, time, pkts, bytes, dontPrint)
 	local wireRate = mbit + (mpps * 20 * 8)
 	self.total = pkts
 	self.totalBytes = bytes
-	if not dontPrint then
+	if not dontPrint and time - self.last_print > 1 then
+		self.last_print = time
+		-- We only print once per second to preserve original behaviour
 		if not webserver then
 			webserver = require "webserver"
 		end
@@ -266,6 +272,7 @@ local function updateCounter(self, time, pkts, bytes, dontPrint)
 	table.insert(self.mpps, mpps)
 	table.insert(self.mbit, mbit)
 	table.insert(self.wireMbit, wireRate)
+	table.insert(self.timestamp, wallTime())
 	return true
 end
 
@@ -312,9 +319,9 @@ manualRxCounter.__index = manualRxCounter
 --- @param dev the device to track
 --- @param format the output format, "CSV" and "plain" (default) are currently supported
 --- @param file the output file, defaults to standard out
-function mod:newDevRxCounter(name, dev, format, file)
+function mod:newDevRxCounter(name, dev, format, file, sampling_rate)
 	if type(name) == "table" then
-		return self:newDevRxCounter(nil, name, dev, format)
+		return self:newDevRxCounter(nil, name, dev, format, file)
 	end
 	-- use device if queue objects are passed
 	dev = dev and dev.dev or dev
@@ -322,7 +329,7 @@ function mod:newDevRxCounter(name, dev, format, file)
 		log:fatal("Bad device")
 	end
 	name = name or tostring(dev):sub(2, -2) -- strip brackets as they are added by the 'plain' output again
-	local obj = newCounter("dev", name, dev, format, file, "rx")
+	local obj = newCounter("dev", name, dev, format, file, "rx", sampling_rate)
 	obj.sleep = 100
 	setmetatable(obj, devRxCounter)
 	obj:clearThroughput() -- reset stats on the NIC
@@ -333,8 +340,8 @@ end
 --- @param name the name of the counter, included in the output
 --- @param format the output format, "CSV" and "plain" (default) are currently supported
 --- @param file the output file, defaults to standard out
-function mod:newPktRxCounter(name, format, file)
-	local obj = newCounter("pkt", name, nil, format, file, "rx")
+function mod:newPktRxCounter(name, format, file, sampling_rate)
+	local obj = newCounter("pkt", name, nil, format, file, "rx", sampling_rate)
 	return setmetatable(obj, pktRxCounter)
 end
 
@@ -342,8 +349,8 @@ end
 --- @param name the name of the counter, included in the output
 --- @param format the output format, "CSV" and "plain" (default) are currently supported
 --- @param file the output file, defaults to standard out
-function mod:newManualRxCounter(name, format, file)
-	local obj = newCounter("manual", name, nil, format, file, "rx")
+function mod:newManualRxCounter(name, format, file, sampling_rate)
+	local obj = newCounter("manual", name, nil, format, file, "rx", sampling_rate)
 	return setmetatable(obj, manualRxCounter)
 end
 
@@ -358,7 +365,7 @@ end
 
 function rxCounter:update()
 	local time = libmoon.getTime()
-	if self.lastUpdate and time <= self.lastUpdate + 1 then
+	if self.lastUpdate and time <= self.lastUpdate + self.sampling_rate then
 		return false
 	end
 	local pkts, bytes = self:getThroughput()
@@ -402,7 +409,7 @@ function manualRxCounter:update(pkts, bytes)
 	self.current = self.current + pkts
 	self.currentBytes = self.currentBytes + bytes
 	local time = libmoon.getTime()
-	if self.lastUpdate and time <= self.lastUpdate + 1 then
+	if self.lastUpdate and time <= self.lastUpdate + self.sampling_rate then
 		return false
 	end
 	local pkts, bytes = self:getThroughput()
@@ -418,7 +425,7 @@ function manualRxCounter:updateWithSize(pkts, size)
 	self.current = self.current + pkts
 	self.currentBytes = self.currentBytes + pkts * (size + 4)
 	local time = libmoon.getTime()
-	if self.lastUpdate and time <= self.lastUpdate + 1 then
+	if self.lastUpdate and time <= self.lastUpdate + self.sampling_rate then
 		return false
 	end
 	local pkts, bytes = self:getThroughput()
@@ -440,17 +447,18 @@ manualTxCounter.__index = manualTxCounter
 --- @param dev the device to track
 --- @param format the output format, "CSV" and "plain" (default) are currently supported
 --- @param file the output file, defaults to standard out
-function mod:newDevTxCounter(name, dev, format, file)
+function mod:newDevTxCounter(name, dev, format, file, sampling_rate)
 	if type(name) == "table" then
-		return self:newDevTxCounter(nil, name, dev, format)
+		return self:newDevTxCounter(nil, name, dev, format, file)
 	end
+
 	-- use device if queue objects are passed
 	dev = dev and dev.dev or dev
 	if type(dev) ~= "table" then
 		log:fatal("Bad device")
 	end
 	name = name or tostring(dev):sub(2, -2) -- strip brackets as they are added by the 'plain' output again
-	local obj = newCounter("dev", name, dev, format, file, "tx")
+	local obj = newCounter("dev", name, dev, format, file, "tx", sampling_rate)
 	obj.sleep = 50
 	setmetatable(obj, devTxCounter)
 	obj:getThroughput() -- reset stats on the NIC
@@ -461,8 +469,8 @@ end
 --- @param name the name of the counter, included in the output
 --- @param format the output format, "CSV" and "plain" (default) are currently supported
 --- @param file the output file, defaults to standard out
-function mod:newPktTxCounter(name, format, file)
-	local obj = newCounter("pkt", name, nil, format, file, "tx")
+function mod:newPktTxCounter(name, format, file, sampling_rate)
+	local obj = newCounter("pkt", name, nil, format, file, "tx", sampling_rate)
 	return setmetatable(obj, pktTxCounter)
 end
 
@@ -470,8 +478,8 @@ end
 --- @param name the name of the counter, included in the output
 --- @param format the output format, "CSV" and "plain" (default) are currently supported
 --- @param file the output file, defaults to standard out
-function mod:newManualTxCounter(name, format, file)
-	local obj = newCounter("manual", name, nil, format, file, "tx")
+function mod:newManualTxCounter(name, format, file, sampling_rate)
+	local obj = newCounter("manual", name, nil, format, file, "tx", sampling_rate)
 	return setmetatable(obj, manualTxCounter)
 end
 
@@ -487,7 +495,7 @@ end
 --- Device-based counter
 function txCounter:update()
 	local time = libmoon.getTime()
-	if self.lastUpdate and time <= self.lastUpdate + 1 then
+	if self.lastUpdate and time <= self.lastUpdate + self.sampling_rate then
 		return false
 	end
 	local pkts, bytes = self:getThroughput()
@@ -525,7 +533,7 @@ function manualTxCounter:update(pkts, bytes)
 	self.current = self.current + pkts
 	self.currentBytes = self.currentBytes + bytes
 	local time = libmoon.getTime()
-	if self.lastUpdate and time <= self.lastUpdate + 1 then
+	if self.lastUpdate and time <= self.lastUpdate + self.sampling_rate then
 		return false
 	end
 	local pkts, bytes = self:getThroughput()
@@ -536,7 +544,7 @@ function manualTxCounter:updateWithSize(pkts, size)
 	self.current = self.current + pkts
 	self.currentBytes = self.currentBytes + pkts * (size + 4)
 	local time = libmoon.getTime()
-	if self.lastUpdate and time <= self.lastUpdate + 1 then
+	if self.lastUpdate and time <= self.lastUpdate + self.sampling_rate then
 		return false
 	end
 	local pkts, bytes = self:getThroughput()
