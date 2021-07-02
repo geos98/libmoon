@@ -319,6 +319,7 @@ manualRxCounter.__index = manualRxCounter
 --- @param dev the device to track
 --- @param format the output format, "CSV" and "plain" (default) are currently supported
 --- @param file the output file, defaults to standard out
+--- @param sampling_rate the interval (in seconds) at which stats are taken (default 1s)
 function mod:newDevRxCounter(name, dev, format, file, sampling_rate)
 	if type(name) == "table" then
 		return self:newDevRxCounter(nil, name, dev, format, file)
@@ -340,6 +341,7 @@ end
 --- @param name the name of the counter, included in the output
 --- @param format the output format, "CSV" and "plain" (default) are currently supported
 --- @param file the output file, defaults to standard out
+--- @param sampling_rate the interval (in seconds) at which stats are taken (default 1s)
 function mod:newPktRxCounter(name, format, file, sampling_rate)
 	local obj = newCounter("pkt", name, nil, format, file, "rx", sampling_rate)
 	return setmetatable(obj, pktRxCounter)
@@ -349,6 +351,7 @@ end
 --- @param name the name of the counter, included in the output
 --- @param format the output format, "CSV" and "plain" (default) are currently supported
 --- @param file the output file, defaults to standard out
+--- @param sampling_rate the interval (in seconds) at which stats are taken (default 1s)
 function mod:newManualRxCounter(name, format, file, sampling_rate)
 	local obj = newCounter("manual", name, nil, format, file, "rx", sampling_rate)
 	return setmetatable(obj, manualRxCounter)
@@ -447,6 +450,7 @@ manualTxCounter.__index = manualTxCounter
 --- @param dev the device to track
 --- @param format the output format, "CSV" and "plain" (default) are currently supported
 --- @param file the output file, defaults to standard out
+--- @param sampling_rate the interval (in seconds) at which stats are taken (default 1s)
 function mod:newDevTxCounter(name, dev, format, file, sampling_rate)
 	if type(name) == "table" then
 		return self:newDevTxCounter(nil, name, dev, format, file)
@@ -469,6 +473,7 @@ end
 --- @param name the name of the counter, included in the output
 --- @param format the output format, "CSV" and "plain" (default) are currently supported
 --- @param file the output file, defaults to standard out
+--- @param sampling_rate the interval (in seconds) at which stats are taken (default 1s)
 function mod:newPktTxCounter(name, format, file, sampling_rate)
 	local obj = newCounter("pkt", name, nil, format, file, "tx", sampling_rate)
 	return setmetatable(obj, pktTxCounter)
@@ -478,6 +483,7 @@ end
 --- @param name the name of the counter, included in the output
 --- @param format the output format, "CSV" and "plain" (default) are currently supported
 --- @param file the output file, defaults to standard out
+--- @param sampling_rate the interval (in seconds) at which stats are taken (default 1s)
 function mod:newManualTxCounter(name, format, file, sampling_rate)
 	local obj = newCounter("manual", name, nil, format, file, "tx", sampling_rate)
 	return setmetatable(obj, manualTxCounter)
